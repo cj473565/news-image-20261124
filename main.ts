@@ -44,7 +44,9 @@ function loadSourceImage(): Buffer {
 
 // Sniff the first bytes: PNG files start with 89 50 4E 47, JPEG files
 // with FF D8 FF. Anything else is rejected before it reaches the output.
-function checkImageSignature(data: Buffer): void {
+// Returns the format name it recognised, so callers can report it and
+// compare it against what later lands on disk.
+function checkImageSignature(data: Buffer): string {
   const isPng =
     data.length >= 4 &&
     data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47;
@@ -54,11 +56,15 @@ function checkImageSignature(data: Buffer): void {
   if (!isPng && !isJpeg) {
     fail('entry.png has an unrecognised header: expected a PNG or JPEG signature');
   }
+  return isPng ? 'PNG' : 'JPEG';
 }
 
 // Create the output directory if needed, write the bytes verbatim, and
-// verify afterwards that what landed on disk is the same size.
-function publishImage(data: Buffer, outputDir: string): string {
+// verify afterwards that what landed on disk is the same size. As a
+// second check, the written file is read back and its header sniffed
+// again: the format recognised there must match the source's format,
+// so a truncated or corrupted write cannot slip through unnoticed.
+function publishImage(data: Buffer, outputDir: string, format: string): string {
   mkdirSync(outputDir, { recursive: true });
   const targetPath = join(outputDir, 'entry.png');
   writeFileSync(targetPath, data);
@@ -67,15 +73,20 @@ function publishImage(data: Buffer, outputDir: string): string {
   if (written !== data.length) {
     fail(`size mismatch after writing: source is ${data.length} bytes, output is ${written} bytes`);
   }
+
+  const writtenFormat = checkImageSignature(readFileSync(targetPath));
+  if (writtenFormat !== format) {
+    fail(`format mismatch after writing: source is ${format}, output reads back as ${writtenFormat}`);
+  }
   return targetPath;
 }
 
 function main(): void {
   const image = loadSourceImage();
-  checkImageSignature(image);
+  const format = checkImageSignature(image);
   const outputDir = resolveOutputDir();
-  const targetPath = publishImage(image, outputDir);
-  console.log(`news-image: wrote ${image.length} bytes to ${targetPath}`);
+  const targetPath = publishImage(image, outputDir, format);
+  console.log(`news-image: wrote ${image.length} bytes (${format}) to ${targetPath}`);
 }
 
 main();
